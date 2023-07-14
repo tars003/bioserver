@@ -1,0 +1,15 @@
+docker build -t tars003/bio-server:1.0
+(returns image id)
+
+docker push
+
+docker run <image_id>
+docker run <tag_name>
+
+docker run -p 8000:5000 <image_id>
+             ( LOCAL:CONTAINER )
+
+docker volume create shared-stuff
+
+docker run -v shared-stuff:/<destination_in_container> <image_id>
+    

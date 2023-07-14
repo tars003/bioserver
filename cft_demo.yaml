@@ -1,0 +1,257 @@
+Description: > 
+  This is a template that deploys a VPC with pair  of public and private subnets spread across 2 availability zones. It deploys an Internet Gateway, with a default route on the public subnets. It deploys a pair of NAT Gateways (one in each AZ), and default routes for them in the private subnets.
+
+Parameters:
+  VpcCIDR:
+    Description: Please enter the CIDR block for the VPC
+    Type: String
+    Default: 10.0.0.0/16
+
+  PublicSubnet1CIDR:
+    Description: Please enter the CIDR block for the public subnet 1 inside availability zone 1
+    Type: String
+    Default: 10.0.0.0/24
+
+  PrivateSubnet1CIDR:
+    Description: Please enter the CIDR block for the private subnet 1 inside availability zone 1
+    Type: String
+    Default: 10.0.1.0/24
+
+  KeyName:
+    Description: Name of existing EC2 Key Pair to enable RDP access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: 'Windows'
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: 't2.micro'
+    ConstraintDescription: must be a valid EC2 instance type.
+
+Resources: 
+  PubPrivateVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      Tags: 
+        - Key:  'Name'
+          Value: 'Custom-VPC'
+
+  EC2Inst01SG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: for the app nodes that allow ssh, http, 5000
+      VpcId: !Ref PubPrivateVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 5000
+        ToPort: 5000
+        CidrIp: 0.0.0.0/0
+
+
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: 'Name'
+          Value: 'Custom-IGW'
+        - Key: 'Network'
+          Value: 'Public'
+  GatewayToInternet:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      InternetGatewayId: !Ref InternetGateway
+  
+  PublicSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      CidrBlock: !Ref PublicSubnet1CIDR
+      AvailabilityZone: 'ap-south-1a'
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: 'Name'
+          Value: 'Public-Subnet-1 (AZ1)'
+        - Key: 'Network'
+          Value: 'Public'
+  
+  PrivateSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      AvailabilityZone: 'ap-south-1a'
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: 'Name'
+          Value: 'Private-Subnet-1 (AZ1)'
+        - Key: 'Network'
+          Value: 'Private' 
+
+
+  # PUBLIC ROUTE TABLE1
+  PublicRouteTable1: 
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      Tags:
+        - Key: 'Name'
+          Value: 'Public1 Route Table'
+        - Key: 'Network'
+          Value: 'Public'
+  PublicRoute1:
+    Type: 'AWS::EC2::Route'
+    DependsOn: GatewayToInternet
+    Properties:
+      RouteTableId: !Ref PublicRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  # ASSOCIATING PUBLIC ROUTE TABLE1 WITH PUBLIC SUBNET1
+  PublicSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable1
+  # PUBLIC ROUTE TABLE1
+
+  # NAT GATEWAY1  FOR PRIVATE SUBNET 1
+  NatPublicIP1:
+    Type: 'AWS::EC2::EIP'
+    DependsOn: PubPrivateVPC
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: 'Name'
+          Value: 'NatPublicIP1'
+  NatGateway1:
+    Type: 'AWS::EC2::NatGateway'
+    DependsOn: NatPublicIP1
+    Properties:
+      AllocationId: !GetAtt NatPublicIP1.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: 'Name'
+          Value: 'NatGateway1'
+  # NAT GATEWAY1 FOR PRIVATE SUBNET 1
+
+  # PRIVATE ROUTE TABLE 1
+  PrivateRouteTable1:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref PubPrivateVPC
+      Tags:
+        - Key: 'Name'
+          Value: 'Private1 Route Table (AZ1)'
+        - Key: 'Network'
+          Value: 'Private'
+  PrivateRoute1:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      # ASSOCIATING PRIVATE ROUTE TABLE1 WITH NAT GATEWAY1
+      NatGatewayId: !Ref NatGateway1
+  PrivateSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable1
+  # PRIVATE ROUTE TABLE 1
+
+  # EC2INST01:
+  #   Type: 'AWS::EC2::Instance'
+  #   Properties:
+  #     ImageId: ami-0d13e3e640877b0b9
+  #     InstanceType: !Ref InstanceType
+  #     KeyName:  !Ref KeyName
+  #     DisableApiTermination: true
+  #     EbsOptimized: true
+  #     SubnetId:  !Ref PublicSubnet1
+  #     SecurityGroupIds: 
+  #       - !Ref EC2Inst01SG
+  #       # - !GetAtt EC2Inst01SG.GroupId
+  #       # - 'sg-069b1bb63f4c68bf7'
+  #     # NetworkInterfaces:
+  #     #   - DeviceIndex: '0'
+  #     #     GroupSet:
+  #     #       - !GetAtt EC2Inst01SG.GroupId
+  #     #     SubnetId: !Ref PublicSubnet1
+  #     UserData:
+  #       Fn::Base64:
+  #         |
+  #         #!/bin/bash -ex
+  #         # output user data logs into a separate file for debugging
+  #         exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+  #         # download nvm
+  #         curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
+  #         # source nvm
+  #         . /.nvm/nvm.sh
+  #         # install node
+  #         nvm install --lts
+  #         nvm use --lts
+  #         #export NVM dir
+  #         export NVM_DIR="/.nvm"	
+  #         [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"	
+  #         [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" 
+
+
+  #         #upgrade yum
+  #         sudo yum upgrade
+  #         #install git
+  #         sudo yum install git -y
+  #         # set credentials
+  #         # git config --global user.name "tars003"
+  #         # git config --global user.email "sharmaajay2kuu@gmail.com"
+
+  #         cd /home/ec2-user
+  #         # get source code from githubt
+  #         git clone https://github.com/tars003/bio-digester-server
+  #         #get in project dir
+  #         cd bio-digester-server
+  #         #give permission
+  #         sudo chmod -R 755 .
+  #         #install node module
+  #         npm install
+  #         #export env variables
+  #         export PORT='5000'
+  #         export DB_URL='mongodb+srv://ajay:ajay@cluster0.9ljycxo.mongodb.net/v4?retryWrites=true&w=majority'
+  #         # start the app
+  #         node server.js > server.out.log 2> server.err.log < /dev/null &
+  #         EOF
+  #     Tags:
+  #       - Key: Name
+  #         Value: EC2INST01
+  #       - Key: Environment
+  #         Value: test
+  
+  
+
+
+Outputs:
+  PubPrivateVPC:
+    Description: A reference to the created VPC
+    Value: !Ref PubPrivateVPC
+    Export:
+      Name: !Sub ${AWS::StackName}-VPC
+
+  PublicSubnet1:
+    Description: A reference to the created Public Subnet 1
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicSubnet1
+
+  PrivateSubnet1:
+    Description: A reference to the created Private Subnet 1
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateSubnet1
